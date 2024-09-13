@@ -1,5 +1,5 @@
 name: Issue Template
-description: ''
+description: 'issue template'
 title: 'Issue Title Here'
 body:
   - type: textarea
