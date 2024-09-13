@@ -1,14 +1,11 @@
 name: Issue Template
 description: ''
-title: ''
-labels: ''
-assignees: ''
-
+title: 'Issue Title Here'
 body:
   - type: textarea
     id: issue_description
     attributes:
-      label: ''
-      placeholder: 'Describe the issue/problem. Describe proposed solution, and at least one next step to get started'
+      label: ' '
+      placeholder: 'Describe the issue/problem. Describe proposed solution, and at least one next step to get started.'
     validations:
       required: true
