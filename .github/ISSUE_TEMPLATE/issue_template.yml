@@ -1,0 +1,35 @@
+name: Issue Template
+description: ''
+title: "[Issue] "
+labels: ''
+assignees: ''
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill out the following sections to help us address your issue efficiently.
+
+  - type: textarea
+    id: issue_problem
+    attributes:
+      label: Describe the issue/problem
+      placeholder: Provide a detailed description of the issue or problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Describe proposed solution
+      placeholder: Suggest a possible solution or workaround.
+    validations:
+      required: false
+
+  - type: textarea
+    id: next_steps
+    attributes:
+      label: At least one next step to get started
+      placeholder: List one or more steps to begin addressing the issue.
+    validations:
+      required: false
