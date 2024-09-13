@@ -2,7 +2,7 @@ name: Issue Template
 description: ''
 title: 'Issue Title Here'
 body:
-  - type: textarea
+  type: textarea
     id: issue_description
     attributes:
       label: ' '
