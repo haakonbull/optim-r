@@ -15,7 +15,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y jq curl gh
 
       - name: Get Issue Details
         id: get-issue-details
@@ -37,13 +37,11 @@ jobs:
       - name: Get Rating
         id: get-rating
         shell: bash
-        env:
-          ISSUE_DESCRIPTION: ${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}
-          ZOO_API_KEY: ${{ secrets.ZOO_API_KEY }}
         run: |
           set -e
           set -o pipefail
 
+          ISSUE_DESCRIPTION="${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}"
           echo "ISSUE_DESCRIPTION: $ISSUE_DESCRIPTION"
 
           THRESHOLD_VALUE=5
@@ -75,11 +73,27 @@ jobs:
           fi
 
           # Call your API with the rating prompt
-          RATING_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -H "User-Agent: GHAction/Issue-Rating" -H "api-key: $ZOO_API_KEY" -d "$RATING_PAYLOAD" https://llm.reasoning.innovation.kognitwin.com/proxy/chat/completions)
+          RATING_RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GHAction/Issue-Rating" \
+            -H "api-key: ${{ secrets.ZOO_API_KEY }}" \
+            -d "$RATING_PAYLOAD" \
+            https://llm.reasoning.innovation.kognitwin.com/proxy/chat/completions)
           echo "RATING_RESPONSE: $RATING_RESPONSE"
 
+          # Check if the response is empty or contains an error
+          if [ -z "$RATING_RESPONSE" ]; then
+            echo "Error: No response from the Model Zoo API"
+            exit 1
+          fi
+
           # Parse the API response to extract the message
-          RATING_MESSAGE=$(echo "$RATING_RESPONSE" | jq -r '.choices[0].message.content')
+          RATING_MESSAGE=$(echo "$RATING_RESPONSE" | jq -r '.choices[0].message.content // empty')
+          if [ -z "$RATING_MESSAGE" ]; then
+            echo "Error: Unable to parse the API response"
+            echo "Full API response: $RATING_RESPONSE"
+            exit 1
+          fi
           echo "RATING_MESSAGE: $RATING_MESSAGE"
 
           # Extract the number from the response
@@ -101,15 +115,12 @@ jobs:
       - name: Critique Issue
         if: steps.get-rating.outputs.proceed_to_critique == 'true'
         shell: bash
-        env:
-          ISSUE_DESCRIPTION: ${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}
-          ISSUE_TITLE: ${{ steps.get-issue-details.outputs.ISSUE_TITLE }}
-          ZOO_API_KEY: ${{ secrets.ZOO_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           set -o pipefail
 
+          ISSUE_DESCRIPTION="${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}"
+          ISSUE_TITLE="${{ steps.get-issue-details.outputs.ISSUE_TITLE }}"
           echo "ISSUE_DESCRIPTION: $ISSUE_DESCRIPTION"
           echo "ISSUE_TITLE: $ISSUE_TITLE"
 
@@ -152,7 +163,12 @@ jobs:
           fi
 
           # Call your API with the issue description
-          API_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -H "User-Agent: GHAction/Issue-Critique" -H "api-key: $ZOO_API_KEY" -d "$PAYLOAD" https://llm.reasoning.innovation.kognitwin.com/proxy/chat/completions)
+          API_RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GHAction/Issue-Critique" \
+            -H "api-key: ${{ secrets.ZOO_API_KEY }}" \
+            -d "$PAYLOAD" \
+            https://llm.reasoning.innovation.kognitwin.com/proxy/chat/completions)
           echo "API_RESPONSE: $API_RESPONSE"
 
           # Parse the API response to extract the message
@@ -161,3 +177,6 @@ jobs:
 
           # Write the message as a comment on the issue
           echo "$MESSAGE" | gh issue comment "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --body-file -
+
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
