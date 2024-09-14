@@ -19,28 +19,41 @@ jobs:
 
       - name: Get Issue Details
         id: get-issue-details
+        shell: bash
         run: |
           ISSUE_DESCRIPTION=$(jq -r '.issue.body' "$GITHUB_EVENT_PATH")
           ISSUE_TITLE=$(jq -r '.issue.title' "$GITHUB_EVENT_PATH")
-          echo "ISSUE_DESCRIPTION<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$ISSUE_DESCRIPTION" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-          echo "ISSUE_TITLE<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$ISSUE_TITLE" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Safely write multi-line outputs
+          {
+            echo "ISSUE_DESCRIPTION<<EOF"
+            echo "$ISSUE_DESCRIPTION"
+            echo "EOF"
+            echo "ISSUE_TITLE<<EOF"
+            echo "$ISSUE_TITLE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Get Rating
         id: get-rating
+        shell: bash
         env:
+          ISSUE_DESCRIPTION: ${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}
           ZOO_API_KEY: ${{ secrets.ZOO_API_KEY }}
         run: |
-          ISSUE_DESCRIPTION="${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}"
+          set -e
+          set -o pipefail
+
+          echo "ISSUE_DESCRIPTION: $ISSUE_DESCRIPTION"
+
           THRESHOLD_VALUE=5
           RATING_PROMPT=$(printf '%s\n' \
-          "Rate the clarity and detail of the following GitHub issue description from 1 to 10, where 1 is very poor and 10 is excellent. Please respond with only a single integer number between 1 and 10." \
-          "" \
-          "ISSUE DESCRIPTION:" \
-          "$ISSUE_DESCRIPTION")
+            "Rate the clarity and detail of the following GitHub issue description from 1 to 10, where 1 is very poor and 10 is excellent. Please respond with only a single integer number between 1 and 10." \
+            "" \
+            "ISSUE DESCRIPTION:" \
+            "$ISSUE_DESCRIPTION")
+          echo "RATING_PROMPT: $RATING_PROMPT"
+
           RATING_PAYLOAD=$(jq -n --arg model "gpt-4o" --arg content "$RATING_PROMPT" --argjson stream false --argjson max_tokens 5 '{
             model: $model,
             messages: [
@@ -52,13 +65,33 @@ jobs:
             stream: $stream,
             max_tokens: $max_tokens
           }')
+          echo "RATING_PAYLOAD: $RATING_PAYLOAD"
+
+          # Validate the JSON payload
+          echo "$RATING_PAYLOAD" | jq . > /dev/null
+          if [ $? -ne 0 ]; then
+            echo "Invalid JSON payload for rating"
+            exit 1
+          fi
+
+          # Call your API with the rating prompt
           RATING_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -H "User-Agent: GHAction/Issue-Rating" -H "api-key: $ZOO_API_KEY" -d "$RATING_PAYLOAD" https://llm.reasoning.innovation.kognitwin.com/proxy/chat/completions)
+          echo "RATING_RESPONSE: $RATING_RESPONSE"
+
+          # Parse the API response to extract the message
           RATING_MESSAGE=$(echo "$RATING_RESPONSE" | jq -r '.choices[0].message.content')
+          echo "RATING_MESSAGE: $RATING_MESSAGE"
+
+          # Extract the number from the response
           RATING_NUMBER=$(echo "$RATING_MESSAGE" | grep -Eo '^[0-9]+$')
+          echo "RATING_NUMBER: $RATING_NUMBER"
+
+          # Check if RATING_NUMBER is a valid integer between 1 and 10
           if ! [[ "$RATING_NUMBER" =~ ^[1-9]$|^10$ ]]; then
             echo "Failed to get a valid rating number between 1 and 10"
             exit 1
           fi
+
           if [ "$RATING_NUMBER" -lt "$THRESHOLD_VALUE" ]; then
             echo "proceed_to_critique=true" >> "$GITHUB_OUTPUT"
           else
@@ -67,12 +100,19 @@ jobs:
 
       - name: Critique Issue
         if: steps.get-rating.outputs.proceed_to_critique == 'true'
+        shell: bash
         env:
+          ISSUE_DESCRIPTION: ${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}
+          ISSUE_TITLE: ${{ steps.get-issue-details.outputs.ISSUE_TITLE }}
           ZOO_API_KEY: ${{ secrets.ZOO_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE_DESCRIPTION="${{ steps.get-issue-details.outputs.ISSUE_DESCRIPTION }}"
-          ISSUE_TITLE="${{ steps.get-issue-details.outputs.ISSUE_TITLE }}"
+          set -e
+          set -o pipefail
+
+          echo "ISSUE_DESCRIPTION: $ISSUE_DESCRIPTION"
+          echo "ISSUE_TITLE: $ISSUE_TITLE"
+
           PROMPT=$(printf '%s\n' \
           "Please provide a concise and short bullet-point list of things that can be improved about the following issue description." \
           "Focus on clarity, how the proposed change can provide value, and if the proposed change considers its surrounding context." \
@@ -89,6 +129,8 @@ jobs:
           "" \
           "ISSUE DESCRIPTION:" \
           "$ISSUE_DESCRIPTION")
+          echo "PROMPT: $PROMPT"
+
           PAYLOAD=$(jq -n --arg model "gpt-4o" --arg content "$PROMPT" --argjson stream false --argjson max_tokens 500 '{
             model: $model,
             messages: [
@@ -100,6 +142,22 @@ jobs:
             stream: $stream,
             max_tokens: $max_tokens
           }')
+          echo "PAYLOAD: $PAYLOAD"
+
+          # Validate the JSON payload
+          echo "$PAYLOAD" | jq . > /dev/null
+          if [ $? -ne 0 ]; then
+            echo "Invalid JSON payload"
+            exit 1
+          fi
+
+          # Call your API with the issue description
           API_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -H "User-Agent: GHAction/Issue-Critique" -H "api-key: $ZOO_API_KEY" -d "$PAYLOAD" https://llm.reasoning.innovation.kognitwin.com/proxy/chat/completions)
+          echo "API_RESPONSE: $API_RESPONSE"
+
+          # Parse the API response to extract the message
           MESSAGE=$(echo "$API_RESPONSE" | jq -r '.choices[0].message.content')
+          echo "MESSAGE: $MESSAGE"
+
+          # Write the message as a comment on the issue
           echo "$MESSAGE" | gh issue comment "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --body-file -
